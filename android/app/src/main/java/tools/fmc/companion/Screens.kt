@@ -85,6 +85,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -141,6 +142,27 @@ import androidx.compose.material3.Surface
 import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import tools.fmc.companion.wire.FaceVerdict
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 
 /** Where the app is: a tab, and a face or the sign-in page on top of it. */
 class Nav {
@@ -160,22 +182,24 @@ class Nav {
     var developer by mutableStateOf(false)
     var firmware by mutableStateOf(false)
     var rescue by mutableStateOf(false)
+    var settings by mutableStateOf(false)
 
     /** Back to the tab's root. */
-    fun root() { pages.clear(); signingIn = false; apps.clear(); developer = false; firmware = false; rescue = false }
+    fun root() { pages.clear(); signingIn = false; apps.clear(); developer = false; firmware = false; rescue = false; settings = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(model: AppModel, nav: Nav) {
     val saveableStateHolder = rememberSaveableStateHolder()
-    BackHandler(nav.face != null || nav.signingIn || nav.app != null || nav.developer || nav.firmware || nav.rescue) {
+    BackHandler(nav.face != null || nav.signingIn || nav.app != null || nav.developer || nav.firmware || nav.rescue || nav.settings) {
         when {
             nav.signingIn -> nav.signingIn = false
             nav.app != null -> nav.app = null
             nav.developer -> nav.developer = false
             nav.firmware -> nav.firmware = false
             nav.rescue -> nav.rescue = false
+            nav.settings -> nav.settings = false
             else -> nav.face = null
         }
     }
@@ -203,24 +227,55 @@ fun App(model: AppModel, nav: Nav) {
                 nav.developer -> "developer"
                 nav.firmware -> "firmware"
                 nav.rescue -> "rescue"
+                nav.settings -> "settings"
                 nav.face?.startsWith("user:") == true -> "author:${nav.face}"
                 nav.face != null -> "face:${nav.face}"
                 nav.tab == 0 -> "catalog"
                 nav.tab == 2 -> "apps"
                 else -> "watch"
             }
-            saveableStateHolder.SaveableStateProvider(key) {
-                when {
-                    nav.signingIn -> SignInScreen(model) { nav.signingIn = false }
-                    nav.app != null -> AppScreen(model, nav.app!!, { nav.app = it }) { nav.app = null }
-                    nav.developer -> DeveloperScreen { nav.developer = false }
-                    nav.firmware -> FirmwareScreen(model) { nav.firmware = false }
-                    nav.rescue -> RescueScreen(model.store) { nav.rescue = false }
-                    nav.face?.startsWith("user:") == true -> AuthorScreen(model, nav.face!!.removePrefix("user:"), { nav.face = it }) { nav.face = null }
-                    nav.face != null -> FaceScreen(model, nav.face!!, { nav.face = "user:$it" }) { nav.face = null }
-                    nav.tab == 0 -> CatalogScreen(model) { nav.face = it }
-                    nav.tab == 2 -> AppsScreen(model) { nav.app = it }
-                    else -> WatchScreen(model, nav) { nav.signingIn = true }
+            AnimatedContent(
+                targetState = key,
+                transitionSpec = {
+                    val isDetail = { k: String -> k != "catalog" && k != "apps" && k != "watch" }
+                    val targetIsDetail = isDetail(targetState)
+                    val initialIsDetail = isDetail(initialState)
+                    if (targetIsDetail && !initialIsDetail) {
+                        (slideInHorizontally(animationSpec = tween(320, easing = LinearOutSlowInEasing)) { fullWidth -> (fullWidth * 0.12f).toInt() } +
+                            fadeIn(animationSpec = tween(320, easing = LinearOutSlowInEasing)))
+                            .togetherWith(slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -(fullWidth * 0.08f).toInt() } +
+                                fadeOut(animationSpec = tween(220)))
+                    } else if (!targetIsDetail && initialIsDetail) {
+                        (slideInHorizontally(animationSpec = tween(320, easing = LinearOutSlowInEasing)) { fullWidth -> -(fullWidth * 0.08f).toInt() } +
+                            fadeIn(animationSpec = tween(320, easing = LinearOutSlowInEasing)))
+                            .togetherWith(slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { fullWidth -> (fullWidth * 0.12f).toInt() } +
+                                fadeOut(animationSpec = tween(220)))
+                    } else if (targetIsDetail && initialIsDetail) {
+                        (slideInHorizontally(animationSpec = tween(320, easing = LinearOutSlowInEasing)) { fullWidth -> (fullWidth * 0.12f).toInt() } +
+                            fadeIn(animationSpec = tween(320, easing = LinearOutSlowInEasing)))
+                            .togetherWith(slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -(fullWidth * 0.08f).toInt() } +
+                                fadeOut(animationSpec = tween(220)))
+                    } else {
+                        fadeIn(animationSpec = tween(240, easing = LinearOutSlowInEasing))
+                            .togetherWith(fadeOut(animationSpec = tween(180)))
+                    }
+                },
+                label = "ScreenTransition"
+            ) { currentKey ->
+                saveableStateHolder.SaveableStateProvider(currentKey) {
+                    when {
+                        nav.signingIn -> SignInScreen(model) { nav.signingIn = false }
+                        nav.app != null -> AppScreen(model, nav.app!!, { nav.app = it }) { nav.app = null }
+                        nav.developer -> DeveloperScreen { nav.developer = false }
+                        nav.firmware -> FirmwareScreen(model) { nav.firmware = false }
+                        nav.rescue -> RescueScreen(model.store) { nav.rescue = false }
+                        nav.settings -> SettingsScreen(model, nav, { nav.signingIn = true }) { nav.settings = false }
+                        nav.face?.startsWith("user:") == true -> AuthorScreen(model, nav.face!!.removePrefix("user:"), { nav.face = it }) { nav.face = null }
+                        nav.face != null -> FaceScreen(model, nav.face!!, { nav.face = "user:$it" }) { nav.face = null }
+                        nav.tab == 0 -> CatalogScreen(model) { nav.face = it }
+                        nav.tab == 2 -> AppsScreen(model) { nav.app = it }
+                        else -> WatchScreen(model, nav)
+                    }
                 }
             }
         }
@@ -339,8 +394,24 @@ fun CatalogScreen(model: AppModel, open: (String) -> Unit) {
 
 /** As fmc.tools' watchface-card: the dial, its name, the author, then downloads, likes and the type. */
 @Composable
-fun FaceCard(model: AppModel, face: Watchface, open: () -> Unit) =
-    Surface(Modifier.clickable(onClick = open), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
+fun FaceCard(model: AppModel, face: Watchface, open: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.985f else 1.0f,
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+        label = "cardScale"
+    )
+    Surface(
+        modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(interactionSource = interactionSource, indication = null, onClick = open),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface
+    ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             FacePreview(face.thumbURL, Modifier.fillMaxWidth().padding(bottom = 2.dp))
             Text(face.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -360,6 +431,7 @@ fun FaceCard(model: AppModel, face: Watchface, open: () -> Unit) =
             }
         }
     }
+}
 
 /** A creator's page, as fmc.tools /user/<id>: avatar, name, totals, then their published faces. */
 @Composable
@@ -399,10 +471,24 @@ fun AuthorScreen(model: AppModel, id: String, open: (String) -> Unit, back: () -
 fun LikeButton(model: AppModel, face: Watchface) {
     val scope = rememberCoroutineScope()
     val liked = model.liked(face)
+    val scale by animateFloatAsState(
+        targetValue = if (liked) 1.10f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "heartScale"
+    )
+    val iconColor by animateColorAsState(
+        targetValue = if (liked) Color(0xFFE5484D) else Fmc.secondary,
+        animationSpec = tween(durationMillis = 250),
+        label = "heartColor"
+    )
     Row(Modifier.clip(CircleShape).clickable(enabled = model.user != null) { scope.launch { model.toggleLike(face) } },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        Icon(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, Modifier.size(15.dp),
-            tint = if (liked) Color(0xFFE5484D) else Fmc.secondary)
+        Icon(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null,
+            Modifier.size(15.dp).graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
+            tint = iconColor)
         Text(compact(model.likeCount(face)), style = MaterialTheme.typography.bodySmall, color = Fmc.secondary)
     }
 }
@@ -655,30 +741,33 @@ fun FaceScreen(model: AppModel, id: String, author: (String) -> Unit = {}, back:
 // Watch
 
 @Composable
-fun WatchScreen(model: AppModel, nav: Nav, signIn: () -> Unit) {
+fun WatchScreen(model: AppModel, nav: Nav) {
     val context = LocalContext.current
     val check = withBluetooth { model.check() }
-    // the ASK notifications need POST_NOTIFICATIONS; the services run without it
-    val notify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { model.switchServices(true) }
-    val startServices = withBluetooth { notify.launch(Manifest.permission.POST_NOTIFICATIONS) }
-    var deleting by remember { mutableStateOf(false) }
-    var deleteError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     Column {
-        Bar("FMC Companion")
+        Bar("FMC Companion", actions = {
+            IconButton({ nav.settings = true }) { Icon(Icons.Default.Settings, stringResource(R.string.settings)) }
+        })
         LazyColumn {
-            AppUpdate.available?.let { r ->
-                item {
-                    Section(footer = AppUpdate.error) {
-                        val progress = AppUpdate.progress
-                        if (progress != null) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text(stringResource(R.string.downloading_update, r.name))
-                                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                            }
-                        } else {
-                            NavRow(stringResource(R.string.update_to, r.name), onClick = { scope.launch { AppUpdate.install(context) } }) {
-                                IconTile(painterResource(R.drawable.ic_watch), Color(0xFF34C759))
+            item {
+                AnimatedVisibility(
+                    visible = AppUpdate.available != null,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    AppUpdate.available?.let { r ->
+                        Section(footer = AppUpdate.error) {
+                            val progress = AppUpdate.progress
+                            if (progress != null) {
+                                Column(Modifier.padding(16.dp)) {
+                                    Text(stringResource(R.string.downloading_update, r.name))
+                                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                                }
+                            } else {
+                                NavRow(stringResource(R.string.update_to, r.name), onClick = { scope.launch { AppUpdate.install(context) } }) {
+                                    IconTile(painterResource(R.drawable.ic_watch), Color(0xFF34C759))
+                                }
                             }
                         }
                     }
@@ -779,8 +868,45 @@ fun WatchScreen(model: AppModel, nav: Nav, signIn: () -> Unit) {
                 }
             }
             item {
-                // updates are checked right after each connect: the Firmware row shows them
                 LaunchedEffect(model.phase) { if (model.phase is Phase.Checked) FirmwareModel.refresh(model.account.token) }
+                Section {
+                    NavRow(stringResource(R.string.settings), onClick = { nav.settings = true }) {
+                        IconTile(Icons.Default.Settings, Color(0xFF757575))
+                    }
+                    if (model.phase is Phase.Checked) {
+                        HorizontalDivider()
+                        NavRow(stringResource(R.string.firmware), count = FirmwareModel.updates(model.loader), onClick = { nav.firmware = true }) {
+                            IconTile(painterResource(R.drawable.ic_memory), Color(0xFF757575))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Settings
+
+@Composable
+fun SettingsScreen(model: AppModel, nav: Nav, signIn: () -> Unit, back: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val notify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { model.switchServices(true) }
+    val startServices = withBluetooth { notify.launch(Manifest.permission.POST_NOTIFICATIONS) }
+    var deleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+    Column {
+        Bar(stringResource(R.string.settings), back = back)
+        LazyColumn {
+            item {
+                Section(stringResource(R.string.services_switch), footer = stringResource(R.string.services_footer)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.services_switch), Modifier.weight(1f))
+                        Switch(model.services, { on -> if (on) startServices() else model.switchServices(false) })
+                    }
+                }
+            }
+            item {
                 Section {
                     if (model.phase is Phase.Checked) {
                         NavRow(stringResource(R.string.firmware), count = FirmwareModel.updates(model.loader), onClick = { nav.firmware = true }) {
@@ -788,20 +914,11 @@ fun WatchScreen(model: AppModel, nav: Nav, signIn: () -> Unit) {
                         }
                         HorizontalDivider()
                     }
-                    // reachable without a connected watch: it is for one that can't connect
                     NavRow(stringResource(R.string.rescue_title), onClick = { nav.rescue = true }) { IconTile(Icons.Default.Warning, Color(0xFFE53935)) }
                     HorizontalDivider()
                     NavRow(stringResource(R.string.developer_options), onClick = { nav.developer = true }) { IconTile(Icons.Default.Build, Color(0xFF757575)) }
                     HorizontalDivider()
                     LanguageRow()
-                }
-            }
-            item {
-                Section(stringResource(R.string.settings), footer = stringResource(R.string.services_footer)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.services_switch), Modifier.weight(1f))
-                        Switch(model.services, { on -> if (on) startServices() else model.switchServices(false) })
-                    }
                 }
             }
             item {
@@ -830,6 +947,22 @@ fun WatchScreen(model: AppModel, nav: Nav, signIn: () -> Unit) {
                             Text(stringResource(R.string.sign_in), Modifier.weight(1f))
                             Text("›", color = Fmc.secondary)
                         }
+                    }
+                }
+            }
+            item {
+                Section(stringResource(R.string.about)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(stringResource(R.string.app_name))
+                        Text("${stringResource(R.string.version)} ${BuildConfig.VERSION_NAME}", color = Fmc.secondary)
+                    }
+                    HorizontalDivider()
+                    Row(Modifier.fillMaxWidth().clickable {
+                        val uri = Uri.fromParts("package", context.packageName, null)
+                        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, uri))
+                    }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(stringResource(R.string.open_app_settings), Modifier.weight(1f))
+                        Icon(painterResource(R.drawable.ic_open_in_new), null, tint = Fmc.secondary)
                     }
                 }
             }
@@ -905,9 +1038,10 @@ private fun WatchStatus(model: AppModel, check: () -> Unit) {
                     is Phase.Checked -> (if (phase.state == null) stringResource(R.string.status_ready) else stringResource(R.string.status_loader_found)) to Fmc.success
                     is Phase.Failed -> phase.message to Fmc.warning
                 }
+                val animatedColor by animateColorAsState(targetValue = color, animationSpec = tween(300), label = "statusColor")
                 // one line each: a taller row would move the watch
                 Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(detail, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(detail, style = MaterialTheme.typography.bodyMedium, color = animatedColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         // opaque while disabled: the strap runs under it

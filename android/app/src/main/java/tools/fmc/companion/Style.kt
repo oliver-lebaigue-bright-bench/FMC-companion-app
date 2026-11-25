@@ -38,6 +38,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -134,8 +138,13 @@ private val images = object : LruCache<String, ImageBitmap>(32 shl 20) {
 @Composable
 fun FacePreview(url: String?, modifier: Modifier = Modifier) {
     val bitmap = rememberImage(url)
+    val alpha by animateFloatAsState(
+        targetValue = if (bitmap != null) 1f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "imageAlpha"
+    )
     Box(modifier.aspectRatio(1f).clip(CircleShape).background(Color.Black)) {
-        bitmap?.let { Image(it, null, Modifier.matchParentSize(), contentScale = ContentScale.Fit) }
+        bitmap?.let { Image(it, null, Modifier.matchParentSize().graphicsLayer { this.alpha = alpha }, contentScale = ContentScale.Fit) }
     }
 }
 
