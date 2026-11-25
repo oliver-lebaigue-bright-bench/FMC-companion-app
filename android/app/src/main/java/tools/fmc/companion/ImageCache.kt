@@ -20,19 +20,26 @@ object ImageCache {
         if (dir == null) dir = File(cacheDir, "images")
     }
 
+    private val hex = "0123456789abcdef".toCharArray()
+
     private fun file(url: String) = dir?.let { d ->
-        File(d, MessageDigest.getInstance("SHA-1").digest(url.toByteArray()).joinToString("") { "%02x".format(it) })
+        val digest = MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
+        val name = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xff
+            name.append(hex[v ushr 4]).append(hex[v and 0x0f])
+        }
+        File(d, name.toString())
     }
 
     /** The bytes saved for [url], else downloaded and saved. */
     suspend fun bytes(url: String): ByteArray = withContext(Dispatchers.IO) {
         val f = file(url)
-        if (f != null && f.isFile) {
-            runCatching { f.readBytes().also { f.setLastModified(System.currentTimeMillis()) } }.getOrNull()?.let { return@withContext it }
-        }
+        if (f != null && f.isFile) runCatching { f.readBytes() }.getOrNull()?.let { return@withContext it }
         download(url).also { raw -> if (f != null) put(f, raw) }
     }
 
+    /** Keeps a running byte total: the directory is listed once, then only when eviction is actually needed. */
     @Synchronized private fun put(f: File, raw: ByteArray) {
         runCatching {
             f.parentFile?.mkdirs()
@@ -40,10 +47,11 @@ object ImageCache {
             tmp.writeBytes(raw)
             tmp.renameTo(f)
         }
-        val files = f.parentFile?.listFiles()?.filter { it.isFile } ?: return
-        val sum = total?.plus(raw.size) ?: files.sumOf { it.length() }
+        if (total == null) total = f.parentFile?.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0
+        val sum = total!! + raw.size
         total = sum
         if (sum <= MAX) return
+        val files = f.parentFile?.listFiles()?.filter { it.isFile } ?: return
         val entries = files.map { it.length() to it.lastModified() }
         evict(entries, MAX).forEach { files[it].delete() }
         total = files.filter { it.exists() }.sumOf { it.length() }

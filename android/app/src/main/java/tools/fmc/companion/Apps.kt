@@ -59,6 +59,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -81,6 +82,8 @@ import tools.fmc.companion.wire.parseHeader
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.debounce
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -198,7 +201,7 @@ fun liveGrants(): Grants {
 /** A watch app's icon, always a circle: its store icon, or its first letter in white on grey. */
 @Composable
 fun AppIcon(name: String, side: Dp = 40.dp) {
-    val bitmap = rememberImage(StoreApps.listing(name)?.icon)
+    val bitmap = rememberImage(StoreApps.listing(name)?.icon, side)
     // systemGray2 behind the letter, as on iOS; nothing behind a store icon
     Surface(Modifier.size(side), shape = CircleShape, color = if (bitmap == null) Color(0xFF8E8E93) else Color.Transparent,
         contentColor = Color.White) {
@@ -324,6 +327,8 @@ fun AppsScreen(model: AppModel, open: (String) -> Unit) {
     // first load: placeholder rows; a refresh keeps the rows it has
     val loading = apps.isEmpty() && if (showAll) !StoreApps.loaded else model.isChecking
     val on = AppOrder.sorted(apps.filter { it.slot != null }, order)
+    // one prefs snapshot for the whole list, not a fresh scan of every grant for every row
+    val pendingCounts = grants.pendingCounts()
     Column {
         Bar(stringResource(R.string.apps)) {
             if (!showAll && on.isNotEmpty()) TextButton({
@@ -344,7 +349,7 @@ fun AppsScreen(model: AppModel, open: (String) -> Unit) {
                 Section(title, footer) {
                     list.forEachIndexed { i, app ->
                         if (i > 0) HorizontalDivider()
-                        NavRow(app.title, app.detail, grants.pendingCount(app.name), { open(if (showAll) "store:${app.name}" else app.name) },
+                        NavRow(app.title, app.detail, pendingCounts[app.name] ?: 0, { open(if (showAll) "store:${app.name}" else app.name) },
                             trailing = if (app.update != null || (app.slot == null && StoreApps.listing(app.name)?.pkg != null)) {{ GetButton(model, app) }}
                                 else if (showAll && app.slot != null) {{ Text(stringResource(R.string.installed), color = Fmc.secondary, fontWeight = FontWeight.SemiBold,
                                     style = MaterialTheme.typography.bodySmall) }} else null) { AppIcon(app.name) }
@@ -469,7 +474,7 @@ fun AppScreen(model: AppModel, value: String, open: (String) -> Unit, back: () -
                     androidx.compose.foundation.lazy.LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(listing.screenshots.size) { i ->
-                            val img = rememberImage(listing.screenshots[i])
+                            val img = rememberImage(listing.screenshots[i], 180.dp)
                             Box(Modifier.size(180.dp).clip(CircleShape).background(Fmc.secondary.copy(alpha = 0.15f))) {
                                 img?.let { Image(it, null, Modifier.size(180.dp), contentScale = ContentScale.Crop) }
                             }
@@ -752,12 +757,18 @@ private fun ColumnScope.InfoStrip(app: WatchApp, listing: StoreApps.Listing) {
 
 /** Name/value pairs the app's requests to `host` carry (an API key, `Authorization: Bearer …`). Kept encrypted on the
  *  phone, never sent to the watch; saved as typed. */
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun HeadersScreen(pkg: String, host: String, back: () -> Unit) {
     val context = LocalContext.current
     val grants = remember { Grants(context) }
     val rows = remember { androidx.compose.runtime.mutableStateListOf(*grants.headers(pkg, host).toTypedArray()) }
-    fun save() = grants.setHeaders(pkg, host, rows.filter { it.first.isNotBlank() })
+    // Keystrokes only touch Compose state; the Keystore round trip and write happen once typing pauses.
+    LaunchedEffect(Unit) {
+        snapshotFlow { rows.map { it.first to it.second } }
+            .debounce(300)
+            .collect { list -> grants.setHeaders(pkg, host, list.filter { it.first.isNotBlank() }) }
+    }
     Column {
         Bar(stringResource(R.string.headers), back)
         LazyColumn {
@@ -767,12 +778,12 @@ fun HeadersScreen(pkg: String, host: String, back: () -> Unit) {
                         if (i > 0) HorizontalDivider()
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                androidx.compose.material3.OutlinedTextField(k, { rows[i] = it to v; save() }, Modifier.fillMaxWidth(),
+                                androidx.compose.material3.OutlinedTextField(k, { rows[i] = it to v }, Modifier.fillMaxWidth(),
                                     label = { Text(stringResource(R.string.header_name)) }, singleLine = true)
-                                androidx.compose.material3.OutlinedTextField(v, { rows[i] = k to it; save() }, Modifier.fillMaxWidth(),
+                                androidx.compose.material3.OutlinedTextField(v, { rows[i] = k to it }, Modifier.fillMaxWidth(),
                                     label = { Text(stringResource(R.string.header_value)) }, singleLine = true)
                             }
-                            TextButton({ rows.removeAt(i); save() }) { Text(stringResource(R.string.delete), color = Fmc.danger) }
+                            TextButton({ rows.removeAt(i) }) { Text(stringResource(R.string.delete), color = Fmc.danger) }
                         }
                     }
                     if (rows.isNotEmpty()) HorizontalDivider()

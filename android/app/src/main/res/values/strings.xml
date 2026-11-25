@@ -303,4 +303,10 @@
     <string name="rescue_sent">Sent. The watch should restart clean. If it still restarts in a loop, start again.</string>
     <string name="rescue_done">Done. The watch kept only its built-in faces.</string>
     <string name="rescue_refused">The watch refused the key this app has: it was paired again since. Rescue can\'t go on without a confirmation on the watch.</string>
+
+    <!-- Theme -->
+    <string name="theme">Theme</string>
+    <string name="theme_classic">Classic</string>
+    <string name="theme_material3">Material 3</string>
+    <string name="theme_material3_footer">Material You: colours from your wallpaper, bigger type and softer shapes, like Android 17 on a Pixel.</string>
 </resources>

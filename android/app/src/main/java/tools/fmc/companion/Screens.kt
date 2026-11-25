@@ -97,12 +97,14 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -144,21 +146,18 @@ import androidx.compose.ui.layout.ContentScale
 import tools.fmc.companion.wire.FaceVerdict
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -188,10 +187,109 @@ class Nav {
     fun root() { pages.clear(); signingIn = false; apps.clear(); developer = false; firmware = false; rescue = false; settings = false }
 }
 
+/**
+ * A snapshot of a destination. AnimatedContent must render the screen a transition is leaving
+ * from; reading Nav's mutable fields inside its content would show the new screen twice instead.
+ * [level] is the depth in the navigation stack: deeper goes forward, shallower goes back.
+ */
+private sealed interface Route {
+    val key: String
+    val level: Int
+
+    data object Catalog : Route {
+        override val key = "catalog"
+        override val level = 0
+    }
+    data object Apps : Route {
+        override val key = "apps"
+        override val level = 0
+    }
+    data object Watch : Route {
+        override val key = "watch"
+        override val level = 0
+    }
+    data object SignIn : Route {
+        override val key = "signin"
+        override val level = 2
+    }
+    data class App(val name: String) : Route {
+        override val key = "app:$name"
+        override val level = if (name.startsWith("store:")) 1 else 2
+    }
+    data object Developer : Route {
+        override val key = "developer"
+        override val level = 2
+    }
+    data object Firmware : Route {
+        override val key = "firmware"
+        override val level = 2
+    }
+    data object Rescue : Route {
+        override val key = "rescue"
+        override val level = 2
+    }
+    data object Settings : Route {
+        override val key = "settings"
+        override val level = 1
+    }
+    data class Author(val id: String) : Route {
+        override val key = "author:$id"
+        override val level = 2
+    }
+    data class Face(val id: String) : Route {
+        override val key = "face:$id"
+        override val level = 1
+    }
+}
+
+private fun Nav.route(): Route = when {
+    signingIn -> Route.SignIn
+    app != null -> Route.App(app!!)
+    developer -> Route.Developer
+    firmware -> Route.Firmware
+    rescue -> Route.Rescue
+    settings -> Route.Settings
+    face?.startsWith("user:") == true -> Route.Author(face!!.removePrefix("user:"))
+    face != null -> Route.Face(face!!)
+    tab == 0 -> Route.Catalog
+    tab == 2 -> Route.Apps
+    else -> Route.Watch
+}
+
+/** Forward slides in from the right, back reverses it, tab switches only cross-fade. */
+private fun screenTransition(initial: Route, target: Route): ContentTransform = when {
+    target.level > initial.level ->
+        (slideInHorizontally(Motion.enter()) { it / 6 } + fadeIn(Motion.enter())) togetherWith
+            (slideOutHorizontally(Motion.exit()) { -it / 12 } + fadeOut(Motion.exit()))
+    target.level < initial.level ->
+        (slideInHorizontally(Motion.enter()) { -it / 12 } + fadeIn(Motion.enter())) togetherWith
+            (slideOutHorizontally(Motion.exit()) { it / 6 } + fadeOut(Motion.exit()))
+    else -> fadeIn(Motion.quick()) togetherWith fadeOut(Motion.quick())
+}
+
+/** One screen, from its snapshot rather than from whatever Nav holds mid-transition. */
+@Composable
+private fun Screen(model: AppModel, nav: Nav, route: Route) {
+    when (route) {
+        Route.SignIn -> SignInScreen(model) { nav.signingIn = false }
+        is Route.App -> AppScreen(model, route.name, { nav.app = it }) { nav.app = null }
+        Route.Developer -> DeveloperScreen { nav.developer = false }
+        Route.Firmware -> FirmwareScreen(model) { nav.firmware = false }
+        Route.Rescue -> RescueScreen(model.store) { nav.rescue = false }
+        Route.Settings -> SettingsScreen(model, nav, { nav.signingIn = true }) { nav.settings = false }
+        is Route.Author -> AuthorScreen(model, route.id, { nav.face = "user:$it" }) { nav.face = null }
+        is Route.Face -> FaceScreen(model, route.id, { nav.face = "user:$it" }) { nav.face = null }
+        Route.Catalog -> CatalogScreen(model) { nav.face = it }
+        Route.Apps -> AppsScreen(model) { nav.app = it }
+        Route.Watch -> WatchScreen(model, nav)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(model: AppModel, nav: Nav) {
     val saveableStateHolder = rememberSaveableStateHolder()
+    val themeProgress = LocalThemeProgress.current
     BackHandler(nav.face != null || nav.signingIn || nav.app != null || nav.developer || nav.firmware || nav.rescue || nav.settings) {
         when {
             nav.signingIn -> nav.signingIn = false
@@ -204,77 +302,49 @@ fun App(model: AppModel, nav: Nav) {
         }
     }
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = mixColor(MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.surfaceContainerLowest, themeProgress),
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            val expressive = LocalExpressive.current
+            val navColors = if (expressive) NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ) else NavigationBarItemDefaults.colors()
+            NavigationBar(containerColor = mixColor(MaterialTheme.colorScheme.surface,
+                MaterialTheme.colorScheme.surfaceContainer, themeProgress)) {
                 NavigationBarItem(nav.tab == 0, { nav.tab = 0; nav.root() },
-                    icon = { Icon(Icons.Default.Home, null) }, label = { Text(stringResource(R.string.watch_faces)) })
+                    icon = { Icon(Icons.Default.Home, null) }, label = { Text(stringResource(R.string.watch_faces)) },
+                    colors = navColors)
                 val pending = liveGrants().pending().size
-                NavigationBarItem(nav.tab == 2, { nav.tab = 2; nav.root() }, label = { Text(stringResource(R.string.apps)) }, icon = {
-                    BadgedBox({ if (pending > 0) androidx.compose.material3.Badge { Text("$pending") } }) {
-                        Icon(painterResource(R.drawable.ic_apps), null, Modifier.size(24.dp))
-                    }
-                })
+                NavigationBarItem(nav.tab == 2, { nav.tab = 2; nav.root() }, label = { Text(stringResource(R.string.apps)) },
+                    icon = {
+                        BadgedBox({ if (pending > 0) androidx.compose.material3.Badge { Text("$pending") } }) {
+                            Icon(painterResource(R.drawable.ic_apps), null, Modifier.size(24.dp))
+                        }
+                    }, colors = navColors)
                 NavigationBarItem(nav.tab == 1, { nav.tab = 1; nav.root() },
-                    icon = { Icon(painterResource(R.drawable.ic_watch), null, Modifier.size(24.dp)) }, label = { Text(stringResource(R.string.watch)) })
+                    icon = { Icon(painterResource(R.drawable.ic_watch), null, Modifier.size(24.dp)) },
+                    label = { Text(stringResource(R.string.watch)) }, colors = navColors)
             }
         },
     ) { pad ->
         Column(Modifier.padding(pad)) {
-            val key = when {
-                nav.signingIn -> "signin"
-                nav.app != null -> "app:${nav.app}"
-                nav.developer -> "developer"
-                nav.firmware -> "firmware"
-                nav.rescue -> "rescue"
-                nav.settings -> "settings"
-                nav.face?.startsWith("user:") == true -> "author:${nav.face}"
-                nav.face != null -> "face:${nav.face}"
-                nav.tab == 0 -> "catalog"
-                nav.tab == 2 -> "apps"
-                else -> "watch"
-            }
+            val route = nav.route()
             AnimatedContent(
-                targetState = key,
-                transitionSpec = {
-                    val isDetail = { k: String -> k != "catalog" && k != "apps" && k != "watch" }
-                    val targetIsDetail = isDetail(targetState)
-                    val initialIsDetail = isDetail(initialState)
-                    if (targetIsDetail && !initialIsDetail) {
-                        (slideInHorizontally(animationSpec = tween(320, easing = LinearOutSlowInEasing)) { fullWidth -> (fullWidth * 0.12f).toInt() } +
-                            fadeIn(animationSpec = tween(320, easing = LinearOutSlowInEasing)))
-                            .togetherWith(slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -(fullWidth * 0.08f).toInt() } +
-                                fadeOut(animationSpec = tween(220)))
-                    } else if (!targetIsDetail && initialIsDetail) {
-                        (slideInHorizontally(animationSpec = tween(320, easing = LinearOutSlowInEasing)) { fullWidth -> -(fullWidth * 0.08f).toInt() } +
-                            fadeIn(animationSpec = tween(320, easing = LinearOutSlowInEasing)))
-                            .togetherWith(slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { fullWidth -> (fullWidth * 0.12f).toInt() } +
-                                fadeOut(animationSpec = tween(220)))
-                    } else if (targetIsDetail && initialIsDetail) {
-                        (slideInHorizontally(animationSpec = tween(320, easing = LinearOutSlowInEasing)) { fullWidth -> (fullWidth * 0.12f).toInt() } +
-                            fadeIn(animationSpec = tween(320, easing = LinearOutSlowInEasing)))
-                            .togetherWith(slideOutHorizontally(animationSpec = tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -(fullWidth * 0.08f).toInt() } +
-                                fadeOut(animationSpec = tween(220)))
-                    } else {
-                        fadeIn(animationSpec = tween(240, easing = LinearOutSlowInEasing))
-                            .togetherWith(fadeOut(animationSpec = tween(180)))
-                    }
-                },
+                targetState = route,
+                transitionSpec = { screenTransition(initialState, targetState) },
+                modifier = Modifier.fillMaxSize(),
                 label = "ScreenTransition"
-            ) { currentKey ->
-                saveableStateHolder.SaveableStateProvider(currentKey) {
-                    when {
-                        nav.signingIn -> SignInScreen(model) { nav.signingIn = false }
-                        nav.app != null -> AppScreen(model, nav.app!!, { nav.app = it }) { nav.app = null }
-                        nav.developer -> DeveloperScreen { nav.developer = false }
-                        nav.firmware -> FirmwareScreen(model) { nav.firmware = false }
-                        nav.rescue -> RescueScreen(model.store) { nav.rescue = false }
-                        nav.settings -> SettingsScreen(model, nav, { nav.signingIn = true }) { nav.settings = false }
-                        nav.face?.startsWith("user:") == true -> AuthorScreen(model, nav.face!!.removePrefix("user:"), { nav.face = it }) { nav.face = null }
-                        nav.face != null -> FaceScreen(model, nav.face!!, { nav.face = "user:$it" }) { nav.face = null }
-                        nav.tab == 0 -> CatalogScreen(model) { nav.face = it }
-                        nav.tab == 2 -> AppsScreen(model) { nav.app = it }
-                        else -> WatchScreen(model, nav)
+            ) { target ->
+                saveableStateHolder.SaveableStateProvider(target.key) {
+                    // Opaque: without this the two screens overlap mid-slide and their text crosses over.
+                    val background = mixColor(MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.surfaceContainerLowest, themeProgress)
+                    Box(Modifier.fillMaxSize().background(background)) {
+                        Screen(model, nav, target)
                     }
                 }
             }
@@ -284,13 +354,21 @@ fun App(model: AppModel, nav: Nav) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun Bar(title: String, back: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) = TopAppBar(
-    title = { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
-    navigationIcon = { back?.let { IconButton(it) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } } },
-    actions = actions,
-    windowInsets = WindowInsets(0),
-    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-)
+fun Bar(title: String, back: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
+    val progress = LocalThemeProgress.current
+    val c = MaterialTheme.colorScheme
+    TopAppBar(
+        title = { Text(title, style = MaterialTheme.typography.titleLarge,
+            fontWeight = if (progress > 0.5f) FontWeight.Bold else FontWeight.SemiBold) },
+        navigationIcon = { back?.let { IconButton(it) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } } },
+        actions = actions,
+        windowInsets = WindowInsets(0),
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = mixColor(c.background, c.surfaceContainer, progress),
+            titleContentColor = mixColor(c.onBackground, c.onSurface, progress),
+        ),
+    )
+}
 
 /** Asks for Bluetooth once, then runs `action`. */
 @Composable
@@ -354,7 +432,7 @@ fun CatalogScreen(model: AppModel, open: (String) -> Unit) {
         }
         PullToRefreshBox(refreshing, { scope.launch { refreshing = true; model.refresh(); refreshing = false } }) {
             LazyVerticalGrid(GridCells.Adaptive(150.dp), Modifier.fillMaxSize(), state = grid,
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -383,7 +461,9 @@ fun CatalogScreen(model: AppModel, open: (String) -> Unit) {
                         Text(empty, Modifier.padding(top = 80.dp), color = Fmc.secondary, textAlign = TextAlign.Center)
                     }
                 }
-                items(shown, key = { it.id }) { face -> FaceCard(model, face) { open(face.id) } }
+                items(shown, key = { it.id }) { face ->
+                    FaceCard(model, face, Modifier.animateItem()) { open(face.id) }
+                }
                 if (model.catalogLoading && !model.catalogEnd && shown.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 }
@@ -394,26 +474,27 @@ fun CatalogScreen(model: AppModel, open: (String) -> Unit) {
 
 /** As fmc.tools' watchface-card: the dial, its name, the author, then downloads, likes and the type. */
 @Composable
-fun FaceCard(model: AppModel, face: Watchface, open: () -> Unit) {
+fun FaceCard(model: AppModel, face: Watchface, modifier: Modifier = Modifier, open: () -> Unit) {
+    val progress = LocalThemeProgress.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.985f else 1.0f,
-        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = Motion.press(),
         label = "cardScale"
     )
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .clickable(interactionSource = interactionSource, indication = null, onClick = open),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface
+            .clickable(interactionSource = interactionSource, onClick = open),
+        shape = RoundedCornerShape(mixDp(18.dp, 36.dp, progress)),
+        color = mixColor(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.surfaceContainerLow, progress)
     ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            FacePreview(face.thumbURL, Modifier.fillMaxWidth().padding(bottom = 2.dp))
+            FacePreview(face.thumbURL, Modifier.fillMaxWidth().padding(bottom = 2.dp), size = 160.dp)
             Text(face.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!face.published) Text(stringResource(R.string.draft), style = MaterialTheme.typography.bodySmall, color = Fmc.secondary)
             else face.author?.let { author ->
@@ -461,7 +542,9 @@ fun AuthorScreen(model: AppModel, id: String, open: (String) -> Unit, back: () -
                         pluralStringResource(R.plurals.author_likes, likes, compact(likes)), color = Fmc.secondary)
                 }
             }
-            items(faces, key = { it.id }) { face -> FaceCard(model, face) { open(face.id) } }
+            items(faces, key = { it.id }) { face ->
+                FaceCard(model, face, Modifier.animateItem()) { open(face.id) }
+            }
         }
     }
 }
@@ -471,32 +554,49 @@ fun AuthorScreen(model: AppModel, id: String, open: (String) -> Unit, back: () -
 fun LikeButton(model: AppModel, face: Watchface) {
     val scope = rememberCoroutineScope()
     val liked = model.liked(face)
-    val scale by animateFloatAsState(
-        targetValue = if (liked) 1.10f else 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-        label = "heartScale"
-    )
-    val iconColor by animateColorAsState(
+    val count = model.likeCount(face)
+    // A one-off pop on change, not a permanent 10% larger heart for as long as it stays liked.
+    val scale = remember(face.id) { Animatable(1f) }
+    var lastLiked by remember(face.id) { mutableStateOf(liked) }
+    LaunchedEffect(liked) {
+        if (liked == lastLiked) return@LaunchedEffect
+        lastLiked = liked
+        if (liked) {
+            scale.animateTo(1.3f, Motion.pop())
+            scale.animateTo(1f, Motion.settle())
+        } else {
+            scale.animateTo(0.82f, Motion.pop())
+            scale.animateTo(1f, Motion.settle())
+        }
+    }
+    val fill by animateFloatAsState(if (liked) 1f else 0f, Motion.quick(), label = "heartFill")
+    val tint by animateColorAsState(
         targetValue = if (liked) Color(0xFFE5484D) else Fmc.secondary,
-        animationSpec = tween(durationMillis = 250),
+        animationSpec = Motion.quick(),
         label = "heartColor"
     )
     Row(Modifier.clip(CircleShape).clickable(enabled = model.user != null) { scope.launch { model.toggleLike(face) } },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        Icon(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null,
-            Modifier.size(15.dp).graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            },
-            tint = iconColor)
-        Text(compact(model.likeCount(face)), style = MaterialTheme.typography.bodySmall, color = Fmc.secondary)
+        Box(Modifier.size(15.dp).graphicsLayer {
+            scaleX = scale.value
+            scaleY = scale.value
+        }) {
+            Icon(Icons.Default.FavoriteBorder, null, Modifier.matchParentSize(), tint = tint.copy(alpha = 1f - fill))
+            Icon(Icons.Default.Favorite, null, Modifier.matchParentSize().graphicsLayer { alpha = fill }, tint = tint)
+        }
+        AnimatedContent(count, transitionSpec = {
+            (fadeIn(Motion.quick()) + slideInVertically { it / 3 }) togetherWith
+                (fadeOut(Motion.quick()) + slideOutVertically { -it / 3 })
+        }, label = "likeCount") { n ->
+            Text(compact(n), style = MaterialTheme.typography.bodySmall, color = Fmc.secondary)
+        }
     }
 }
 
 /** A round avatar, else the name's first letter. */
 @Composable
 fun Avatar(url: String?, name: String, side: Dp) {
-    val bitmap = rememberImage(url)
+    val bitmap = rememberImage(url, side)
     Surface(Modifier.size(side), shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
         if (bitmap != null) Image(bitmap, null, Modifier.size(side), contentScale = ContentScale.Crop)
         else Box(contentAlignment = Alignment.Center) {
@@ -515,12 +615,14 @@ fun compact(n: Int): String = when {
 /** A face on the watch as Nothing X and fmc.tools show it: its round preview and name; the active one ringed yellow. */
 /** A face's round picture: its preview, else the black panel with its number. */
 @Composable
-fun DialPicture(model: AppModel, slot: DialSlot, modifier: Modifier = Modifier) {
+fun DialPicture(model: AppModel, slot: DialSlot, modifier: Modifier = Modifier, size: Dp = 88.dp) {
     val url = model.dials[slot.id]?.thumbURL ?: slot.preview
-    if (url != null) FacePreview(url, modifier)
+    if (url != null) FacePreview(url, modifier, size)
     else Box(modifier.aspectRatio(1f).clip(CircleShape).background(Color.Black), contentAlignment = Alignment.Center) {
         // no picture anywhere for stock and Nothing X faces: the watch's place for it
-        Text("${slot.index + 1}", color = Color(0xFFFFC700), fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("${slot.index + 1}",
+            color = mixColor(Color(0xFFFFC700), MaterialTheme.colorScheme.primary, LocalThemeProgress.current),
+            fontSize = 26.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -545,7 +647,9 @@ fun DialTile(model: AppModel, slot: DialSlot, modifier: Modifier = Modifier, act
     val face = model.dials[slot.id]
     Column(modifier.width(88.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val ring = if (active) Modifier.border(2.5.dp, Color(0xFFFFC700), CircleShape) else Modifier
+        val ring = if (active) Modifier.border(2.5.dp,
+            mixColor(Color(0xFFFFC700), MaterialTheme.colorScheme.primary, LocalThemeProgress.current), CircleShape)
+        else Modifier
         Box(ring.padding(3.dp)) { DialPicture(model, slot, Modifier.fillMaxWidth()) }
         Text(face?.name ?: slot.label, style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -636,7 +740,7 @@ fun FaceScreen(model: AppModel, id: String, author: (String) -> Unit = {}, back:
                     item {
                         Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            FacePreview(f.previewURL, Modifier.widthIn(max = 240.dp).fillMaxWidth())
+                            FacePreview(f.previewURL, Modifier.widthIn(max = 240.dp).fillMaxWidth(), size = 240.dp)
                             Text(f.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center)
                             f.otherDevice?.let { other ->
@@ -753,8 +857,8 @@ fun WatchScreen(model: AppModel, nav: Nav) {
             item {
                 AnimatedVisibility(
                     visible = AppUpdate.available != null,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
+                    enter = fadeIn(Motion.enter()) + expandVertically(Motion.enter()),
+                    exit = fadeOut(Motion.exit()) + shrinkVertically(Motion.exit())
                 ) {
                     AppUpdate.available?.let { r ->
                         Section(footer = AppUpdate.error) {
@@ -838,7 +942,8 @@ fun WatchScreen(model: AppModel, nav: Nav) {
                         items(faces, key = { it.index }) { slot ->
                             var menu by remember { mutableStateOf(false) }
                             Box {
-                                DialTile(model, slot, Modifier.alpha(if (busy) 0.4f else 1f).combinedClickable(enabled = !busy,
+                                val tileAlpha by animateFloatAsState(if (busy) 0.45f else 1f, Motion.quick(), label = "tileAlpha")
+                                DialTile(model, slot, Modifier.alpha(tileAlpha).combinedClickable(enabled = !busy,
                                     onLongClick = { menu = true }) { change { activateFace(context, model.store, slot.id) } },
                                     active = slot.id == on.active)
                                 DropdownMenu(menu, { menu = false }) {
@@ -899,10 +1004,54 @@ fun SettingsScreen(model: AppModel, nav: Nav, signIn: () -> Unit, back: () -> Un
         Bar(stringResource(R.string.settings), back = back)
         LazyColumn {
             item {
+                Section(stringResource(R.string.theme)) {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        val options = listOf(
+                            AppTheme.Classic to stringResource(R.string.theme_classic),
+                            AppTheme.Material3 to stringResource(R.string.theme_material3),
+                        )
+                        options.forEachIndexed { i, (mode, label) ->
+                            SegmentedButton(
+                                selected = model.theme == mode,
+                                onClick = { model.selectTheme(mode) },
+                                shape = SegmentedButtonDefaults.itemShape(i, options.size),
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible = model.theme == AppTheme.Material3,
+                        enter = fadeIn(Motion.enter()) + expandVertically(Motion.enter()),
+                        exit = fadeOut(Motion.exit()) + shrinkVertically(Motion.exit()),
+                    ) {
+                        val c = MaterialTheme.colorScheme
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(stringResource(R.string.theme_material3_footer),
+                                style = MaterialTheme.typography.bodySmall, color = Fmc.secondary)
+                            // The palette the phone gave us, straight from the live colour scheme.
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(c.primary, c.secondary, c.tertiary,
+                                    c.primaryContainer, c.secondaryContainer, c.tertiaryContainer)
+                                    .forEach { swatch ->
+                                        Surface(Modifier.size(28.dp), CircleShape, color = swatch) {}
+                                    }
+                            }
+                        }
+                    }
+                }
+            }
+            item {
                 Section(stringResource(R.string.services_switch), footer = stringResource(R.string.services_footer)) {
+                    val expressive = LocalExpressive.current
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.services_switch), Modifier.weight(1f))
-                        Switch(model.services, { on -> if (on) startServices() else model.switchServices(false) })
+                        Switch(model.services, { on -> if (on) startServices() else model.switchServices(false) },
+                            colors = if (!expressive) SwitchDefaults.colors() else SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            ))
                     }
                 }
             }
@@ -926,7 +1075,7 @@ fun SettingsScreen(model: AppModel, nav: Nav, signIn: () -> Unit, back: () -> Un
                     val user = model.user
                     if (user != null) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            val avatar = rememberImage(user.avatarUrl)
+                            val avatar = rememberImage(user.avatarUrl, 44.dp)
                             Surface(Modifier.size(44.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
                                 if (avatar != null) Image(avatar, null, Modifier.size(44.dp), contentScale = ContentScale.Crop)
                                 else Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.onPrimary) }
@@ -1020,7 +1169,7 @@ private fun WatchStatus(model: AppModel, check: () -> Unit) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     when (phase) {
                         Phase.Checking -> CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                        is Phase.Checked -> if (active != null) DialPicture(model, active, Modifier.fillMaxSize())
+                        is Phase.Checked -> if (active != null) DialPicture(model, active, Modifier.fillMaxSize(), size = 76.dp)
                         else -> Icon(painterResource(R.drawable.ic_watch), null, Modifier.size(24.dp), tint = Color.White.copy(alpha = 0.6f))
                     }
                 }
@@ -1038,10 +1187,16 @@ private fun WatchStatus(model: AppModel, check: () -> Unit) {
                     is Phase.Checked -> (if (phase.state == null) stringResource(R.string.status_ready) else stringResource(R.string.status_loader_found)) to Fmc.success
                     is Phase.Failed -> phase.message to Fmc.warning
                 }
-                val animatedColor by animateColorAsState(targetValue = color, animationSpec = tween(300), label = "statusColor")
+                val animatedColor by animateColorAsState(targetValue = color, animationSpec = Motion.quick(), label = "statusColor")
                 // one line each: a taller row would move the watch
                 Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(detail, style = MaterialTheme.typography.bodyMedium, color = animatedColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                AnimatedContent(detail, transitionSpec = {
+                    (fadeIn(Motion.quick()) + slideInVertically { it / 6 }) togetherWith
+                        (fadeOut(Motion.quick()) + slideOutVertically { -it / 6 })
+                }, label = "statusDetail") { text ->
+                    Text(text, style = MaterialTheme.typography.bodyMedium, color = animatedColor,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         // opaque while disabled: the strap runs under it

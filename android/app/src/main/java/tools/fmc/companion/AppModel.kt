@@ -73,7 +73,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         catalogEnd = false
         catalogError = null
         faces = q.cacheName?.let { cached(it) }?.let { runCatching { Catalog.parse(it) }.getOrNull() } ?: emptyList()
-        faces.forEach(::remember)
+        remember(faces)
         loadPage()
     }
 
@@ -114,7 +114,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             page = next
             catalogEnd = items.size < CatalogQuery.PER_PAGE
             catalogError = null
-            items.forEach(::remember)
+            remember(items)
             if (hasLikesCount == false) runCatching { Catalog.countLikes(items) }.onSuccess { counts = counts + it }
         } catch (e: Exception) {
             if (gen == generation && e !is kotlinx.coroutines.CancellationException) catalogError = e.message ?: str(R.string.catalog_load_failed)
@@ -123,10 +123,17 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun remember(face: Watchface) {
-        known[face.id] = face
-        face.likesCount?.let { counts = counts + (face.id to it) }
-        dials = dials + (dialId(face.id) to DialFace(face.id, face.collectionId, face.name, face.preview))
+    /** One map write per page instead of one per face, so a page of 40 faces doesn't copy 40 growing maps. */
+    private fun remember(faces: List<Watchface>) {
+        val newCounts = mutableMapOf<String, Int>()
+        val newDials = mutableMapOf<Long, DialFace>()
+        faces.forEach { face ->
+            known[face.id] = face
+            face.likesCount?.let { newCounts[face.id] = it }
+            newDials[dialId(face.id)] = DialFace(face.id, face.collectionId, face.name, face.preview)
+        }
+        if (newCounts.isNotEmpty()) counts = counts + newCounts
+        dials = dials + newDials
     }
 
     /** The signed-in user's own likes, for the hearts; nothing signed out. */
@@ -160,7 +167,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** An author's published faces, all of them. */
     suspend fun author(id: String): List<Watchface> {
         val faces = Catalog.author(id, account.token)
-        faces.forEach(::remember)
+        remember(faces)
         if (faces.firstOrNull()?.likesCount == null) runCatching { Catalog.countLikes(faces) }.onSuccess { counts = counts + it }
         return faces
     }
@@ -200,6 +207,15 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     var services by mutableStateOf(prefs.getBoolean("services", false))
         private set
+
+    /** Which design the whole app uses; picked in Settings, remembered across launches. */
+    var theme by mutableStateOf(AppTheme.from(prefs.getString("theme", null)))
+        private set
+
+    fun selectTheme(value: AppTheme) {
+        theme = value
+        prefs.edit().putString("theme", value.name).apply()
+    }
 
     /** The miniapp services' foreground service (RpcService); on again at every launch while switched on. */
     fun switchServices(on: Boolean) {
@@ -275,7 +291,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** A face from a list loaded, else from the server: a deep link can name one before any list. */
     suspend fun face(id: String): Watchface = known[id] ?: Catalog.face(id, account.token).also {
-        remember(it)
+        remember(listOf(it))
         if (it.likesCount == null) runCatching { Catalog.countLikes(listOf(it)) }.onSuccess { n -> counts = counts + n }
     }
 

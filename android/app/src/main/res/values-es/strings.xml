@@ -295,4 +295,9 @@
     <string name="rescue_sent">Enviado. El reloj debería reiniciarse limpio. Si sigue reiniciándose en bucle, vuelve a empezar.</string>
     <string name="rescue_done">Listo. El reloj conservó solo sus esferas integradas.</string>
     <string name="rescue_refused">El reloj rechazó la clave que tiene la app: se volvió a vincular desde entonces. El rescate no puede seguir sin una confirmación en el reloj.</string>
+
+    <string name="theme">Tema</string>
+    <string name="theme_classic">Clásico</string>
+    <string name="theme_material3">Material 3</string>
+    <string name="theme_material3_footer">Material You: colores de tu fondo de pantalla, texto más grande y formas más suaves, como Android 17 en un Pixel.</string>
 </resources>

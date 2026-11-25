@@ -17,7 +17,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) Analytics.start(this)
         if (savedInstanceState == null) handle(intent)
         if (model.services) RpcService.start(this)
-        setContent { FmcTheme { App(model, nav) } }
+        setContent { FmcTheme(model.theme) { App(model, nav) } }
     }
 
     override fun onNewIntent(intent: Intent) {

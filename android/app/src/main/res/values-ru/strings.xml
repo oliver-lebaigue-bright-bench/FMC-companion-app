@@ -301,4 +301,9 @@
     <string name="rescue_sent">Отправлено. Часы должны перезагрузиться начисто. Если они всё ещё перезагружаются по кругу, запустите снова.</string>
     <string name="rescue_done">Готово. На часах остались только встроенные циферблаты.</string>
     <string name="rescue_refused">Часы отклонили ключ, который есть у приложения: с тех пор их привязали заново. Без подтверждения на часах спасение невозможно.</string>
+
+    <string name="theme">Тема</string>
+    <string name="theme_classic">Классическая</string>
+    <string name="theme_material3">Material 3</string>
+    <string name="theme_material3_footer">Material You: цвета из ваших обоев, крупнее текст и мягче формы — как Android 17 на Pixel.</string>
 </resources>

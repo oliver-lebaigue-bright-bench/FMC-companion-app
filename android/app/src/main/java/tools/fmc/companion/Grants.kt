@@ -29,14 +29,22 @@ class Grants(context: Context) {
     private fun parts(prefix: String) = prefs.all.keys.filter { it.startsWith(prefix) }
         .map { it.removePrefix(prefix).split("|", limit = 2) }.filter { it.size == 2 }.map { it[0] to it[1] }
 
-    fun of(pkg: String): Map<String, Boolean> =
-        parts("g|").filter { it.first == pkg }.associate { it.second to prefs.getBoolean("g|$pkg|${it.second}", false) }
+    /** One snapshot of the prefs: no getBoolean round trip per cap. */
+    fun of(pkg: String): Map<String, Boolean> {
+        val all = prefs.all
+        val prefix = "g|$pkg|"
+        return all.keys.filter { it.startsWith(prefix) }.associate { it.removePrefix(prefix) to (all[it] as? Boolean == true) }
+    }
 
     /** Every package that asked for something or has an answer. */
     fun packages(): List<String> = (parts("g|") + parts("p|")).map { it.first }.distinct().sorted()
 
-    /** Every cap the package asked for or has an answer for. */
-    fun caps(pkg: String): List<String> = (parts("g|") + parts("p|")).filter { it.first == pkg }.map { it.second }.distinct().sorted()
+    /** Every cap the package asked for or has an answer for, from a single prefs snapshot. */
+    fun caps(pkg: String): List<String> {
+        val keys = prefs.all.keys
+        return (keys.filter { it.startsWith("g|$pkg|") }.map { it.removePrefix("g|$pkg|") } +
+            keys.filter { it.startsWith("p|$pkg|") }.map { it.removePrefix("p|$pkg|") }).distinct().sorted()
+    }
 
     fun isPending(pkg: String, cap: String) = prefs.contains("p|$pkg|$cap") && !prefs.contains("g|$pkg|$cap")
 
@@ -52,8 +60,19 @@ class Grants(context: Context) {
         e.apply()
     }
 
-    /** (pkg, cap) asked and not answered yet. */
-    fun pending(): List<Pair<String, String>> = parts("p|").filter { it.second !in of(it.first) }
+    /** (pkg, cap) asked and not answered yet. One prefs snapshot, not one per pending cap. */
+    fun pending(): List<Pair<String, String>> {
+        val all = prefs.all
+        val answered = all.keys.filter { it.startsWith("g|") }.map { it.removePrefix("g|") }.toSet()
+        return all.keys.filter { it.startsWith("p|") }.mapNotNull { key ->
+            val cap = key.removePrefix("p|")
+            val pair = cap.split("|", limit = 2)
+            pair.takeIf { it.size == 2 && cap !in answered }?.let { it[0] to it[1] }
+        }
+    }
+
+    /** Pending asks per package, computed once for a whole list instead of once per row. */
+    fun pendingCounts(): Map<String, Int> = pending().groupingBy { it.first }.eachCount()
 
     fun set(pkg: String, cap: String, allow: Boolean) =
         prefs.edit().putBoolean("g|$pkg|$cap", allow).remove("p|$pkg|$cap").apply()

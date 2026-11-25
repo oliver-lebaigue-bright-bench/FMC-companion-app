@@ -301,4 +301,9 @@
     <string name="rescue_sent">Надіслано. Годинник має перезавантажитися начисто. Якщо він досі перезавантажується по колу, запустіть знову.</string>
     <string name="rescue_done">Готово. На годиннику залишилися лише вбудовані циферблати.</string>
     <string name="rescue_refused">Годинник відхилив ключ, який має застосунок: відтоді його прив’язали знову. Без підтвердження на годиннику порятунок неможливий.</string>
+
+    <string name="theme">Тема</string>
+    <string name="theme_classic">Класична</string>
+    <string name="theme_material3">Material 3</string>
+    <string name="theme_material3_footer">Material You: кольори з ваших шпалер, більший текст і м’якіші форми — як Android 17 на Pixel.</string>
 </resources>

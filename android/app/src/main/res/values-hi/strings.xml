@@ -291,4 +291,9 @@
     <string name="rescue_sent">भेज दिया। घड़ी साफ़ रीस्टार्ट होनी चाहिए। अगर वह अब भी बार-बार रीस्टार्ट हो, तो फिर से शुरू करें।</string>
     <string name="rescue_done">हो गया। घड़ी पर सिर्फ़ बिल्ट-इन फ़ेस रहे।</string>
     <string name="rescue_refused">घड़ी ने इस ऐप की कुंजी अस्वीकार कर दी: तब से उसे फिर से पेयर किया गया है। घड़ी पर पुष्टि के बिना बचाव आगे नहीं बढ़ सकता।</string>
+
+    <string name="theme">थीम</string>
+    <string name="theme_classic">क्लासिक</string>
+    <string name="theme_material3">मटेरियल 3</string>
+    <string name="theme_material3_footer">मटेरियल यू: आपके वॉलपेपर के रंग, बड़ा टेक्स्ट और नरम आकार, जैसे पिक्सल पर Android 17।</string>
 </resources>
